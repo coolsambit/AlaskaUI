@@ -1,0 +1,7 @@
+## Angular
+node_modules/
+dist/
+.angular/
+*.tgz
+.env
+.env.local
