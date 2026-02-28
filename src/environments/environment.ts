@@ -1,6 +1,6 @@
 export const environment = {
   production: false,
-  documentHubEndpoint: '', // set your Document Hub base URL here
+  documentHubEndpoint: process.env['NG_APP_DOCUMENT_HUB_ENDPOINT'] || 'http://localhost:7071/api',
   // set azure.enabled to true when you want to use real Azure AD authentication
   azure: {
     enabled: true,

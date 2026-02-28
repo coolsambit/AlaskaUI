@@ -1,58 +1,24 @@
+interface Project {
+  id: string;
+  name: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+}
 import { Component, OnInit, ViewChild, ElementRef } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { DocumentHubService, Project, Category } from '../services/document-hub.service';
+import { DocumentHubService } from '../services/document-hub.service';
+import { DocumentIntelligenceWorkflowService } from './document-intelligence.service';
+import { ErrorHandler } from '../services/error-handler';
 
 @Component({
   selector: 'app-upload',
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule],
-  styles: [`
-    .upload-status {
-      margin-top: 16px;
-      padding: 12px 16px;
-      border-radius: 6px;
-      font-weight: 500;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .upload-status.uploading {
-      background-color: #e8f0fe;
-      color: #1a73e8;
-      border: 1px solid #c6dafc;
-    }
-    .upload-status.success {
-      background-color: #e6f4ea;
-      color: #1e8e3e;
-      border: 1px solid #b7e1cd;
-    }
-    .upload-status.error {
-      background-color: #fce8e6;
-      color: #d93025;
-      border: 1px solid #f5c6cb;
-    }
-    .spinner {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      border: 3px solid #c6dafc;
-      border-top: 3px solid #1a73e8;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    .status-icon {
-      font-size: 18px;
-    }
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-  `],
+  styleUrls: ['./upload.component.css'],
   template: `
     <h2>Upload documents</h2>
     <form [formGroup]="uploadForm" (ngSubmit)="onSubmit()">
@@ -123,12 +89,18 @@ export class UploadComponent implements OnInit {
       { id: 'CategoryC2', name: 'CategoryC2' }
     ]
   };
+
   selectedFile?: File;
   isUploading = false;
-  statusMessage: 'success' | 'error' | null = null;
+  statusMessage: 'success' | 'error' | 'extracting' | null = null;
   errorDetail = '';
+  extracting = false;
 
-  constructor(private fb: FormBuilder, private hub: DocumentHubService) {
+  constructor(
+    private fb: FormBuilder,
+    private hub: DocumentHubService,
+    private docIntelligenceWorkflow: DocumentIntelligenceWorkflowService
+  ) {
     this.uploadForm = this.fb.group({ project: [''], category: [''], notes: [''] });
   }
 
@@ -152,57 +124,47 @@ export class UploadComponent implements OnInit {
 
   onSubmit(): void {
     if (this.uploadForm.valid && this.selectedFile) {
-      // Show spinner, clear previous status
       this.isUploading = true;
       this.statusMessage = null;
       this.errorDetail = '';
 
-      const data = {
-        projectId: this.uploadForm.value.project,
-        categoryId: this.uploadForm.value.category,
-        notes: this.uploadForm.value.notes
-      };
-      this.hub.uploadDocument(this.selectedFile, data).subscribe({
-        next: () => {
+      const projectId = this.uploadForm.value.project || '';
+      const categoryId = this.uploadForm.value.category || '';
+      const notes = this.uploadForm.value.notes || '';
+      this.hub.uploadDocument(this.selectedFile, projectId, categoryId, notes).subscribe({
+        next: (uploadRes) => {
           this.isUploading = false;
-          this.statusMessage = 'success';
+          this.statusMessage = 'extracting';
+          this.extracting = true;
           // Reset form, file input, and button
           this.uploadForm.reset();
           this.selectedFile = undefined;
           if (this.fileInputRef) {
             this.fileInputRef.nativeElement.value = '';
           }
-        },
-        error: (err) => {
-          console.error('Upload error:', err);
-          this.isUploading = false;
-          this.statusMessage = 'error';
 
-          // Extract a human-readable message from the HttpErrorResponse
-          if (err?.status === 401) {
-            this.errorDetail = 'You do not have access to this resource. Please sign in with a valid account.';
-          } else if (err?.status === 403) {
-            this.errorDetail = 'Access denied. You do not have permission to perform this action.';
-          } else {
-            const body = err?.error;
-            if (typeof body === 'string') {
-              this.errorDetail = body;
-            } else if (body?.message) {
-              this.errorDetail = body.message;
-            } else if (body?.error) {
-              this.errorDetail = typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
-            } else if (err?.status === 0) {
-              this.errorDetail = 'Could not reach the server. Please check your network connection.';
-            } else if (err?.status) {
-              this.errorDetail = `Server returned status ${err.status}: ${err.statusText || 'Unknown error'}`;
-            } else if (err?.message) {
-              this.errorDetail = err.message;
-            } else {
-              this.errorDetail = 'An unexpected error occurred.';
+          // Call DocumentIntelligenceOperations after upload success using workflow service
+          const fullpathofthefile = uploadRes?.filePath || '';
+          const documentIntelligenceSecret = '';
+          this.docIntelligenceWorkflow.runDocumentIntelligence(fullpathofthefile, documentIntelligenceSecret).subscribe({
+            next: res => {
+              this.statusMessage = 'success';
+              this.extracting = false;
+            },
+            error: err => {
+              this.statusMessage = 'error';
+              this.extracting = false;
             }
+          });
+        },
+          error: (err) => {
+            console.error('Upload error:', err);
+            this.isUploading = false;
+            this.statusMessage = 'error';
+            this.errorDetail = ErrorHandler.getErrorMessage(err);
           }
-        }
       });
     }
   }
 }
+
